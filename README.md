@@ -1,3 +1,4 @@
-# Diploma
+# Prestrezniki in algebrajski učinki na primerih iz finančne matematike
+### DIPLOMSKO DELO
 
-Datoteka nastale pri delu za diplomo.
+Repozitorij vsebuje datoteke nastale ob delu za diplomsko nalogo.
