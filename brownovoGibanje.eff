@@ -1,0 +1,265 @@
+(*IMPLEMENTATION OF MATH FUNCTIONS*)
+
+(* Number pi*)
+let pi = 3.14159265358979323846264338;;
+
+(* x to the power y, where x is of type float*)
+let rec raise_to_power x y =
+  match y with
+  | 0 -> 1.0
+  | y -> x *. (raise_to_power x (y - 1))
+;;
+
+(*Factorial*)
+let rec factorial = function
+  | 0 -> 1
+  | x -> x * factorial (x - 1)
+;;
+
+(*Square root function: n steps of Newton's method with initial value x0
+SPREMENI V SAMODEJNO PREVERJANJE NATANČNOSTI!!*)
+let n_sqrt n x0 x =
+  let rec sqrt' n aprox =
+    if n <= 0 then aprox
+    else
+      let aprox' = aprox -. ((raise_to_power aprox 2) -. x) /. (2.0 *. aprox) in
+      sqrt' (n - 1) aprox'
+  in
+  sqrt' n x0
+;;
+
+let sqrt x = n_sqrt 30 1.0 x;;
+
+(*IMPLEMENTATION OF MATH FUNCTIONS
+using sum of first n terms of Taylor series*)
+
+(*ith derivative of desired function evaluated at
+  the point 0.0*)
+effect TermOfTaylorSeries : int * float -> float;;
+
+(*The Taylor series for desired
+  function ex at 0.0 evaluated in x.*)
+let taylor n x z =
+  let rec taylor' i sum =
+    if i > n then sum
+    else
+      let sum_new = sum +. perform (TermOfTaylorSeries (i, x)) in
+    taylor' (i + 1) sum_new
+  in
+  taylor' z 0.0
+
+(*ith derivative of cos(x) evaluated at
+  the point 0.0*)
+let termForCos = handler
+               | effect (TermOfTaylorSeries (i, x)) k ->
+      continue k  ((float_of_int (- 1 ** i)) *. (raise_to_power x (2 * i)) /. float_of_int (factorial (2 * i)))
+;;
+
+(*ith derivative of sin(x) evaluated at
+  the point 0.0*)
+let termForSin = handler
+               | effect (TermOfTaylorSeries (i, x)) k ->
+      continue k  ((float_of_int (- 1 ** i)) *. (raise_to_power x (2 * i + 1)) /. float_of_int (factorial (2 * i + 1)))
+;;
+
+(*ith derivative of log(x) evaluated at
+  the point 0.0*)
+let termForLog = handler
+               | effect (TermOfTaylorSeries (i, x')) k ->
+                 continue k  (-. (raise_to_power x' i) /. (float_of_int i))
+;;
+
+(* cos function*)
+let cos x =
+with termForCos handle taylor 15 x 0;;
+
+(*sin function*)
+let sin x =
+with termForSin handle taylor 15 x 0;;
+
+(*log function: only  for x <= 1.0 && x > 0.0!!!*)
+let log x =
+  if x = 1.0 then 0.0 else
+  let x' = 1.0 -. x in
+  with termForLog handle taylor 100 x' 1
+;;
+
+(* exp function*)
+let n_exp n x =
+  let rec exp' k sum =
+    if k <= 0.0
+      then sum
+    else
+      let sum_new = 1.0 +. x *. sum /. k in
+      exp' (k -. 1.0) sum_new
+    in
+    exp' n 1.0
+;;
+
+let exp x = n_exp 100. x;;
+
+(*Big deviation from the right result!!! FIND SOME OTHER SOLUTION!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!*)
+let tan x = sin x /. cos x;;
+
+(* RANDOM NUMBER GENERATION BASED ON PROBABILITY DISTRIBUTION
+   USING TRANSFORMATION METHOD
+   which mean that others distributions comes from transformation of uniformly distributed random numbers.
+   Legend of variables:
+   - u_i: uniformly distributed variables
+   - z_i: variables with wanted distribution
+*)
+
+(*Exponential distribution:
+  cumulative distribution function is given by
+  F(x; lambda) = 1-e^{-lambda * x} ; x >= 0
+  we use the inverse function, which is feasible to compute*)
+let exponential_dist lambda =
+  let u = perform (Random_float 1.0) in
+  -. (log u) /. lambda
+;;
+
+
+(*Normal (Gaussian) distribution:
+  Box-Miller method*)
+let two_independent_gaussian () =
+  let u_1 = perform (Random_float 1.0) in
+  let u_2 = perform (Random_float 1.0) in
+  let part1 = sqrt (-. 2.0 *. (log u_1)) in
+  let part2 = cos (2.0 *. pi *. u_2) in
+  let part3 = sin (2.0 *. pi *. u_2) in
+  let z_1 = part1 *. part2 in
+  let z_2 = part1 *. part3  in
+  (z_1, z_2)
+;;
+
+(*Lorentzian distribution: p(x) = 1/(Pi * s) * (1/(1+ (x - n)²/ s²))
+  inverse of it's integral is: x = s tan (Pi * y) + n
+  if we choose y ~ Unif(0, 1), then for x in above term valid x ~ p(x)
+*)
+let lorentzian_dist n s =
+  let u = perform (Random_float 1.0) in
+  let z = s *. tan (pi *. u) +. n in
+  z
+;;
+
+let lorentzian_pdf x s n = (1.0 /. (pi *. s)) /. (1.0 +. (raise_to_power (x -. n) 2) /. (raise_to_power s 2))
+;;
+let gaussian_pdf x s n = (1.0 /. sqrt (2.0 *. pi *. (raise_to_power s 2)) *. exp (-. (raise_to_power (x -. n) 2) /. (2.0 *. (raise_to_power s 2))))
+;;
+(*REJECTION SAMPLING:
+  Description of an algorith:
+  We want to sample from pdf (probability distribution function) f
+  1.) by multiplaing  f with constant k > 1 we define f_ = k * f
+  2.) choose a "proposal distribution" q, which is easi to sample from,
+  sach that exsist c > 0, c * q(x) => f_ for all x
+  3.) sample x ~ q and for given x sample u ~ Unif(0, c * q(x))
+  4.) If u <= f_ (x) then return x, else  "reject" and return to step 3.
+*)
+
+type x = float (*one realization of x ~ q*)
+type f_x = float (* f_ (x)*)
+type cq_x = float (* c*q(x) *)
+
+effect WantedDist : x * float * float -> f_x;;
+effect SamplingProposalDist :  float * float -> x * cq_x;;
+
+(*Algorithm for rejection sampling:
+  - returns random numbers with distribution
+  defined in handler for effect WantedDist
+  - proposal disribution is defined in handler for effect SamplingProposalDist*)
+let rec rejection_sampling p1 p2 p3 p4 =
+  let (x, cq_x) = perform (SamplingProposalDist (p1, p2)) in
+  let u = perform (Random_float (cq_x)) in
+  if u <= perform (WantedDist (x, p3, p4)) then x
+  else rejection_sampling p1 p2 p3 p4
+;;
+
+(*For proposal distribution is used lorentzian function*)
+let lorentzian_proposal_dist = handler
+  | effect (SamplingProposalDist (s, n)) k ->
+    let x = lorentzian_dist n s in
+    let c = 2.0 in
+    let q_x = (lorentzian_pdf x s n) in
+    continue k (x, c *. q_x)
+;;
+
+(*For generating random numbers ~ gauss(n, s)*)
+let gaussina_wanted_dist = handler
+  | effect (WantedDist (x, s, n)) k ->
+    let f_x = gaussian_pdf x s n in
+    continue k f_x
+;;
+
+(* Gaussina distribution sampling:
+   - s: standard deviation
+   - n: mean
+*)
+let gauss n s =
+with lorentzian_proposal_dist handle
+with gaussina_wanted_dist handle
+  rejection_sampling s n s n
+;;
+gauss 3. 2.;;
+
+(* M. Pretnar: examples/random.eff*)
+(* A random walk of k steps where the increments are distributed  Normal(0, dt)*)
+(* Set up a state to keep track of position. *)
+type stanje = float
+effect Get: unit -> stanje
+effect Set: stanje -> unit
+
+
+let stanje v_0 = handler
+  | y -> (fun _ -> y)
+  | effect (Get ()) k -> (fun s -> (continue k s) s)
+  | effect (Set s') k -> (fun _ -> (continue k ()) s')
+  | finally g -> g v_0
+;;
+
+(* A function that simulates a walk.
+   Increments are gauss distributed*)
+effect Prirastek: unit -> float
+
+  let slucajni_sprehod v_0 n =
+  with stanje v_0 handle
+    (let rec sprehajanje m =
+       let novo_stanje =
+         perform (Get ()) +. perform (Prirastek ())
+       in
+       perform (Set novo_stanje);
+       if m < n then sprehajanje (m + 1) else perform (Get ())
+     in
+     sprehajanje 0)
+  ;;
+
+(*BROWNIAN MOTION:*)
+(*described by the Wiener proces: stochastic processes W_t with stationary independent increments
+  characterized by four facts:
+  - W_0 = 0
+  - W_t is almost surely continuous
+  - W_t has independent increments
+  - (W_t - W_s) ~ Normal(0, t - s) for 0 <= s <= t.
+*)
+(* k steps of Wiener stochastic proces (Brownian motion)*)
+let normalni_prirastki s dt = handler
+  |effect (Prirastek ()) k -> continue k (gauss 0.0 (s *. dt))
+;;
+
+let brownianMotion k s dt v_0 =
+with normalni_prirastki s dt handle
+  slucajni_sprehod v_0 k;;
+
+brownianMotion 5 4.0 (1.0 /. 255.0) 5.0;;
+
+(* k steps of geometric Brownian motion
+   A stochastic process S_t following stochastic
+   differential equation dS_t = m *. S_t *. dt + s *. S_t *. dW_t,
+   where W_t is a Wiener proces or Brownian motion, and
+   parameters m = drift
+   and s (> 0) = volatility are constants
+
+   S_t is  log-normally distributed
+   d(log S_t) ~ Normal ((m -(s^2/2.0)*dt),(s^2)*dt) )
+*)
+(*let gmb k dt m s= exp (walk k (m -. ((raise_to_power s 2) /. 2.0) *. dt ) ((raise_to_power s 2) *. dt));;
+  let gmb 10 (1.0 /. 255.0) 3.0 4.5;;*)
