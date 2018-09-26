@@ -1,0 +1,286 @@
+(* Pomožne funkcije *)
+let rec map1 f lst =
+  match lst with
+  | [] -> []
+  | x :: xs -> (f x) :: map1 f xs
+  ;;
+
+let rec map2 f lst1 lst2 =
+  match lst1, lst2 with
+  | [], [] -> []
+  | (x :: xs), (y :: ys) -> (f x y) :: (map2 f xs ys)
+(*| (_ :: _), [] -> raise (Invalid_argument "map2")
+  | [], (_ :: _) -> raise (Invalid_argument "map2") *)
+
+
+let rec sestej = function
+  | [] -> 0.0
+  | d :: ds -> d +. sestej ds
+;;
+
+let rec obrestuj obresti delnice =
+  match obresti, delnice with
+  | [], [] -> []
+  | (x::xs), ((y, z)::tl) -> (x *. y, z) :: (obrestuj xs tl)
+
+let first (x, y)= x;;
+let second (x, y) = y;;
+
+let omeji delnice portfelj_novi =
+  map2 (fun m x -> max 0 (min (second m) x)) delnice portfelj_novi
+;;
+
+let rec rep n elem =
+  match n with
+  | 0 -> []
+  | x -> elem :: rep (x - 1) elem
+;;
+
+let rec len sez =
+  match sez with
+  | [] -> 0
+  | (x :: xs) -> 1 + len xs
+;;
+
+let rec pomnozi p = function
+  | (x, xs) -> (p *. x, (map1 (fun x -> (1.0 -. p) *. x) xs))
+;;
+
+let rec zdruzi prvi drugi =
+  match prvi, drugi with
+  | (x, xs), (y, ys) -> (x +. y, (map2 ( +. ) xs ys))
+;;
+
+let vrednost_portfelja portfelj delnice =
+  map2 (fun x m -> float_of_int x *. (first m)) portfelj delnice
+;;
+
+let rec cene_delnic = function
+  | [] -> []
+  |(x, y)::tl -> x :: (cene_delnic tl)
+;;
+
+let rec kolicina_delnic = function
+  | [] -> []
+  |(x, y)::tl -> y :: (kolicina_delnic tl)
+;;
+
+(*#########################################################################################################################################*)
+(* Pomožne funkcije in prestrezniki za porazdelitve.
+   Samo nekoliko predelane funkcije iz primerov prof. Pretnarja. *)
+
+effect Izberi : float -> bool;;
+
+(* Izbere vrednost na podlagi porazdelitve.*)
+
+let rec distribution_pick l =
+  let rec pick_aux acc = function
+  | [(x, _)] -> x
+  | (x, p)::xs ->
+    let adjusted_p = (p/.(1. -. acc)) in
+    if perform (Izberi adjusted_p) then x else pick_aux (acc +. p) xs
+  in
+  pick_aux 0. l
+;;
+
+(* Združi dve porazdelitvi, pri tem je prva porazdelitev izbrana z verjetnostjo p
+   in druga z verjetnostjo (1 - p).*)
+
+   let combine p dist1 dist2 =
+     let scale p dist = map (fun (x, q) -> (x, p *. q)) dist in
+     let rec add (x, p) = function
+       | [] -> [(x, p)]
+       | (y, q) :: dist ->
+         if x = y then (x, p +. q) :: dist else (y, q) :: add (x, p) dist
+     in
+     let dist1 = scale p dist1 in
+     let dist2 = scale (1.0 -. p) dist2 in
+     fold_right add dist1 dist2
+;;
+
+(* Prestreznik, ki vrača porazdelitev verjetnostnega računanja.*)
+let porazdelitev = handler
+  | v -> [(v, 1.0)]
+  | effect (Izberi p) k -> combine p (continue k true) (continue k false)
+;;
+
+(* Presterznik, ki vrača pričakovano vrednost verjetnostnega računanja,
+   pri čemer morajo biri vrednosti tipa float *)
+let pricakovana_vrednost = handler
+  | v -> v
+  | effect (Izberi p) k ->
+  (zdruzi (pomnozi p (continue k true)) (pomnozi (1.0 -. p) (continue k false)))
+;;
+
+(* Prestreznik, ki vrača eno realizacijo verjetnostnega računanja,
+   na podlagi predpisanjih verjetnosti. *)
+let realizacija = handler
+  | v -> v
+  | effect (Izberi p) k ->
+  let izbira = perform (Random_float 1.) < p in
+  continue k izbira
+;;
+
+(*##########################################################################################################################*)
+(* OSNOVNI MODEL DELOVANJA TRGA *)
+
+type banka = float
+type delnice = (float * int) list (*(vrednost delnice, kolicina delnic) list*)
+type portfelj = int list
+type zgodovina = float list (*Podatki o tem kaj se je dogajalo v zgodovini.*)
+
+(* Učinek, ki določi trgovalno strategijo oz. portfelij, ki ga bomo kupili. *)
+effect Trguj : zgodovina * float * delnice -> portfelj;;
+
+(* Učinek, ki določa razvoj tgra v posameznih obdobjih, kar so v našem primeru
+   obrestne mere, po katerih se obrestujejo vrednostni papirji. *)
+effect Obrestuj : delnice -> delnice;;
+
+
+effect Shrani_zgodovino : zgodovina * delnice -> zgodovina
+(* Argumenti:
+   - [n] število korakov simulacije
+   - [banka_p] obrestna mera v banki za pozitivno stanje
+   - [banka_n] obresnta mera v banki za negativno stanje
+   - [banka0]  začetno stanje na banki
+   - [delnice] začetna vrednost trga
+   - [portfelj0] začetni portfelj
+*)
+
+let simulacija n banka_p banka_n banka0 delnice0 portfelj0 =
+  (* EN KORAK SIMULACIJE *)
+  let rec korak k banka delnice zgodovina portfelj =
+    if k >= n then
+      let vrednost_portfelja' = vrednost_portfelja portfelj delnice in
+      (banka , vrednost_portfelja')
+    else
+      (* TRGUJEMO *)
+      let staraVrednostP = vrednost_portfelja portfelj delnice in
+      let premozenje = banka +. sestej staraVrednostP in
+      (* Izačuna novi portfelj in ga omeji z količino ponudbe na trgu. *)
+      let portfelj' = omeji delnice (perform (Trguj (zgodovina, premozenje, delnice)))  in
+      (* Izračuna novo stanje na banki.*)
+      let novaVrednostP = vrednost_portfelja portfelj' delnice in
+      let banka' = premozenje -. (sestej novaVrednostP) in
+      (* SHRANI ZGODOVINO *)
+      let zgodovina' = perform (Shrani_zgodovino (zgodovina, delnice)) in
+      (* EVOLUCIJA TRGA *)
+      let delnice' = perform (Obrestuj delnice) in
+      (* Obrestuje stanje na bančnem računu.*)
+      let banka' = banka' *. (if banka' < 0.0 then banka_n else banka_p) in
+
+
+      korak (k+1) banka' delnice' zgodovina' portfelj'
+  in
+  korak 0 banka0 delnice0 (cene_delnic delnice0) portfelj0
+  ;;
+
+
+(*  ############################################################################################################################# *)
+(*  BINOMSKI MODEL TRGA
+Število vrednostnih papirjev: 3 *)
+
+let obrestuj_iz_diskretne_por = handler
+  | v -> v
+  | effect (Obrestuj s) k ->
+    let obresti1 =  [1.2; 0.94; 0.99] in
+    let obresti2 = [0.89; 1.1; 1.04] in
+    let obresti3 = [0.92; 1.0; 0.87] in
+  (continue k (distribution_pick
+     [(obrestuj obresti1 s,0.3);(obrestuj obresti2 s,0.4);
+     (obrestuj obresti3 s,0.3)]))
+;;
+
+let drzimo_do_povecanja = handler
+    | effect (Trguj (zgodovina, premozenje, delnice)) k ->
+    let cena_delnic = cene_delnic delnice in
+    let rec cas_ustavlanja zgodovina cena_delnic =
+      match zgodovina, cena_delnic with
+      | [], [] -> []
+      | (x::xs), (y::ys) -> (if (5. /. 4. *. x) >= y then 1 else 0) :: (cas_ustavlanja xs ys) in
+      (continue k (cas_ustavlanja zgodovina cena_delnic))
+;;
+
+let drzimo_do_prvega_padca_vrednosti = handler
+  | effect (Trguj (zgodovina, premozenje, delnice)) k ->
+  let cena_delnic = cene_delnic delnice in
+  let rec cas_ustavlanja zgodovina cena_delnic =
+  match zgodovina, cena_delnic with
+  | [], [] -> []
+  | (x::xs), (y::ys) -> (if x <= y then 1 else 0) :: (cas_ustavlanja xs ys) in
+  (continue k (cas_ustavlanja zgodovina cena_delnic))
+;;
+
+
+let zacetno_stanje = handler
+    | effect (Shrani_zgodovino (zacetno_st, delnice)) k ->
+    (continue k zacetno_st)
+;;
+
+let prejsno_stanje = handler
+    | effect (Shrani_zgodovino (zgodovina, delnice)) k ->
+    (continue k (cene_delnic delnice))
+;;
+
+let primer1 n =
+  with obrestuj_iz_diskretne_por handle
+  with drzimo_do_povecanja handle
+  with zacetno_stanje handle
+  simulacija n 1.001 0.9 200.0 [(30.0,1); (40.0,1); (50.0,1)] [1; 1; 1]
+;;
+
+let primer2 n =
+  with obrestuj_iz_diskretne_por handle
+  with drzimo_do_prvega_padca_vrednosti handle
+  with prejsno_stanje handle
+  simulacija n 1.001 0.9 200.0 [(30.0,1); (40.0,1); (50.0,1)] [1; 1; 1]
+;;
+
+ (*COMBINE...ne zdruzi skupaj enakih vrednosti??*)
+with porazdelitev handle
+  primer1 3
+;;
+
+with realizacija handle
+  primer1 3
+;;
+
+with porazdelitev handle
+  primer2 3
+;;
+
+with realizacija handle
+  primer2 3
+;;
+
+with pricakovana_vrednost handle
+  primer2 2
+;;
+
+
+(* Primer 2: delujoč....zakomentiran samo zato, da ne izpisujemo preveč.
+
+let trguj_kupimo_prvega = handler
+  |effect (Trguj (premozenje, vrednostni_papirji)) k ->
+  match vrednostni_papirji with
+    | (x :: xs) -> continue k (x :: map1 (fun _ -> 0.0) xs)
+;;
+
+let druga_strategija n =
+  with obresti_binomski handle
+  with trguj_kupimo_prvega handle
+  simulacija n 1.02 0.9 200.0 [30.0; 40.0; 50.0] [0.0; 0.0; 0.0]
+;;
+
+with porazdelitev handle
+  druga_strategija 5
+;;
+
+with realizacija handle
+  druga_strategija 5
+;;
+
+with pricakovana_vrednost handle
+  druga_strategija 5
+;;
+*)
