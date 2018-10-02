@@ -10,6 +10,8 @@ Opisana je logika nedeterminističnega programiranja pri katerem z uporabo prest
 
 Kot alternativo prestreznikom pri nedeterminističnem programiranju so opisani tudi delovanje in uporaba konceptov modul, funktor in monada. Narejena je primerjava med zgornjimi koncepti in prestrezniki s poudarki na prednostih, ki jih slednji prinašajo.
 
+Več si lahko preberete v datoteki Golob-27151001-2018.pdf.
+
 # Abstract
 This final thesis strives to present a general idea and use of handlers and algebraic effects. Their logic and syntax (in Eff programming language) is presented and explained on numerous examples from the field of Financial mathematics.
 
